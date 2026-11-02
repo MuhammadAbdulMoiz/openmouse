@@ -1394,6 +1394,7 @@ function readCapabilities(): DeviceCapabilities {
   return {
     canDisableSleep: dm?.canDisableSleep === true,
     angleTuningWritable: clientHasMethod("setAngleTuning"),
+    dpiWritable: clientHasMethod("setDpi"),
     // A driver that publishes a stage table without the stage-write methods
     // (the classic Razer driver: writes there are deliberately unverified)
     // renders the table read-only instead of offering edits that can never

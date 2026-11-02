@@ -49,6 +49,8 @@ export interface TeevolutionProfile {
 export interface DeviceCapabilities {
   canDisableSleep: boolean;
   angleTuningWritable: boolean;
+  /** The live DPI can be set directly (Single view, Custom value). */
+  dpiWritable: boolean;
   dpiStagesWritable: boolean;
   activeDpiStageWritable: boolean;
   dpiStageAxesWritable: boolean;

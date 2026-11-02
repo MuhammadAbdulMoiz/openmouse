@@ -14,6 +14,7 @@ import {
   pickFlashDpiTarget,
   pickFlashLiftOffTarget,
   pickFlashPollRateTarget,
+  dpiFlashSkip,
   pollingSampleResult,
   runFlashRoundTrip,
   verdictFor,
@@ -259,9 +260,10 @@ export function HardwareTestPage({ snapshot }: { snapshot: ControlSnapshot }): R
 
             // Setting 1: DPI — round-trip (write → read-back → restore).
             const dpiCurrent = live.status.dpi;
-            // 0 means the driver cannot read the live DPI, so there is nothing to restore to.
-            if (dpiCurrent === null || dpiCurrent === 0) {
-              legs.push({ setting: "DPI", current: "—", target: "—", status: "skip", detail: "no DPI value is reported on this device." });
+            const dpiSkip = dpiFlashSkip(dpiCurrent, live.capabilities?.dpiWritable);
+            // dpiFlashSkip always skips a null DPI; the null check only narrows the type below.
+            if (dpiSkip || dpiCurrent === null) {
+              legs.push(dpiSkip!);
             } else {
               const dpiTarget = pickFlashDpiTarget(dpiCurrent, live.dpiOptions);
               if (dpiTarget === null) {

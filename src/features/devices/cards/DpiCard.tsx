@@ -682,7 +682,9 @@ export function DpiCard({ snapshot }: { snapshot: ControlSnapshot }): ReactNode 
     || (Boolean(status?.ui?.dpiStageEditor)
       && Array.isArray(status?.dpiStages)
       && (status?.dpiStages?.length ?? 0) > 0);
-  const singleDpiAvailable = !isNoirS1Status(status) && !isNoirE1Status(status);
+  // Single view and Custom set the live DPI; a stage-only driver (no setDpi) edits the table alone.
+  const liveDpiWritable = snapshot.capabilities?.dpiWritable !== false;
+  const singleDpiAvailable = liveDpiWritable && !isNoirS1Status(status) && !isNoirE1Status(status);
 
   // dpi 0 means the driver cannot read the live DPI.
   const label = (source: typeof status): string => source.dpi > 0 ? `${source.dpi.toLocaleString()} DPI` : "–";
@@ -738,7 +740,7 @@ export function DpiCard({ snapshot }: { snapshot: ControlSnapshot }): ReactNode 
               readOnly={!snapshot.customDpiEditing}
               onChange={(event) => control.setCustomDpiText(event.currentTarget.value)}
               onClick={() => {
-                if (!snapshot.customDpiEditing) control.startCustomDpi();
+                if (!snapshot.customDpiEditing && liveDpiWritable) control.startCustomDpi();
               }}
               onKeyDown={(event) => {
                 if (event.key === "Enter") {
@@ -754,7 +756,7 @@ export function DpiCard({ snapshot }: { snapshot: ControlSnapshot }): ReactNode 
             <button
               id="custom-dpi"
               type="button"
-              hidden={slotsAvailable}
+              hidden={slotsAvailable || !liveDpiWritable}
               disabled={snapshot.settingsPending || snapshot.dpiOptions.length === 0}
               onClick={() => (snapshot.customDpiEditing ? control.commitCustomDpi() : control.startCustomDpi())}
             >

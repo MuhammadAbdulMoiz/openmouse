@@ -10,6 +10,7 @@ import {
   pickFlashDpiTarget,
   pickFlashLiftOffTarget,
   pickFlashPollRateTarget,
+  dpiFlashSkip,
   pollingSampleResult,
   runFlashRoundTrip,
   verdictFor,
@@ -401,4 +402,15 @@ test("flash round-trip counts only a \"written\" flash result, for the write and
   const thrown = await run(async () => { throw new Error("boom"); });
   assert.equal(thrown.status, "fail");
   assert.equal(discards, 1);
+});
+
+test("DPI flash leg: skip unknown DPI, skip stage-only drivers with the real DPI shown, else run", () => {
+  assert.equal(dpiFlashSkip(null, true)?.detail, "no DPI value is reported on this device.");
+  assert.equal(dpiFlashSkip(0, true)?.detail, "no DPI value is reported on this device.");
+  const stageOnly = dpiFlashSkip(1600, false);
+  assert.equal(stageOnly?.status, "skip");
+  assert.equal(stageOnly?.current, `${(1600).toLocaleString()} DPI`);
+  assert.equal(stageOnly?.detail, "live DPI changes are not supported on this device.");
+  assert.equal(dpiFlashSkip(1600, true), null);
+  assert.equal(dpiFlashSkip(1600, undefined), null);
 });

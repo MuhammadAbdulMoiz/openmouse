@@ -385,6 +385,21 @@ export interface FlashSettingRoundTrip {
   detail: string;
 }
 
+/**
+ * Why the DPI flash leg cannot run, or null when it can. dpi 0 means the driver
+ * cannot read the live DPI (nothing to restore to); a stage-only driver without
+ * setDpi (dpiWritable false) has no live DPI write to round-trip.
+ */
+export function dpiFlashSkip(dpi: number | null, dpiWritable: boolean | undefined): FlashSettingRoundTrip | null {
+  if (dpi === null || dpi === 0) {
+    return { setting: "DPI", current: "—", target: "—", status: "skip", detail: "no DPI value is reported on this device." };
+  }
+  if (dpiWritable === false) {
+    return { setting: "DPI", current: `${dpi.toLocaleString()} DPI`, target: "—", status: "skip", detail: "live DPI changes are not supported on this device." };
+  }
+  return null;
+}
+
 /** One setting to round-trip: stage a target, flash, read back, then restore the original. */
 export interface FlashLeg {
   setting: string;
