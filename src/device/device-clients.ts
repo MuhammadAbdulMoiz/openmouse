@@ -132,7 +132,8 @@ export async function clientSupportScore(device: HIDDevice): Promise<number> {
   // Keyboard command interfaces win over generic mouse HID++/Razer registries.
   if (createKeyboardClient(device)) return 900;
   if (await bridgeRazerClient(device) !== null) return 10_000;
-  if (AulaSc580HidClient.isSupported(device)) return 50;
+  // The cable wins over the receiver: a plugged-in SC580 stops answering over 2.4 GHz.
+  if (AulaSc580HidClient.isSupported(device)) return AulaSc580HidClient.isWired(device) ? 60 : 50;
   return (await loadRegistry()).clientSupportScore(device);
 }
 
@@ -175,6 +176,9 @@ export async function logicalDeviceGroups(devices: HIDDevice[] = []): Promise<HI
  * identity either platform offers.
  */
 function physicalDeviceKey(device: HIDDevice): string {
+  // The SC580's cable and receiver are one mouse with two USB ids.
+  // shortcut: two SC580s at once would also merge into one card; key by serial if that ever matters.
+  if (AulaSc580HidClient.isSupported(device)) return "aula-sc580";
   if ((device as { openMouseTransport?: string }).openMouseTransport === "bridge") {
     return `bridge:${(device as { key?: string }).key ?? ""}`;
   }

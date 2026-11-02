@@ -102,6 +102,11 @@ export class AulaSc580HidClient {
     this.retryDelayMs = options.retryDelayMs ?? 400;
   }
 
+  /** The mouse itself on its cable (0x088D) rather than the receiver; while plugged in it only talks this way. */
+  static isWired(device: HIDDevice): boolean {
+    return device.vendorId === AULA_SC580_PRODUCTS[1].vendorId && device.productId === AULA_SC580_PRODUCTS[1].productId;
+  }
+
   static isSupported(device: HIDDevice): boolean {
     return AULA_SC580_PRODUCTS.some((p) => p.vendorId === device.vendorId && p.productId === device.productId)
       && device.collections.some((c) => c.usagePage === SETTINGS_USAGE_PAGE);
@@ -134,8 +139,10 @@ export class AulaSc580HidClient {
     const id = await this.exchange(CMD_IDENTIFY, []);
     if (String.fromCharCode(...id.slice(0, 4)) !== "M137") throw new Error("This device did not identify as an AULA SC580.");
     const { stages } = await this.readTable();
-    // Identify byte 9 is the charge in percent: seen counting down 62 -> 61 on battery, matching
-    // the vendor app's battery icon. Charging state is not decoded yet, so it stays Unknown.
+    // Identify byte 8 is 1 while the cable is in (charging) and 0 on battery. Byte 9 is the charge
+    // in percent on battery (seen counting down 62 -> 61, matching the vendor app's icon), but it
+    // jumps straight to 100 on the cable, so it is not shown while charging.
+    const charging = id[8] === 1;
     const battery = id[9];
     const pollingRateHz = await this.readPollingRate();
     // dpi 0 means unknown (the active stage is not readable yet); so does pollingRateHz 0.
@@ -143,8 +150,8 @@ export class AulaSc580HidClient {
       // AULA is not in the protocol package's closed brand union.
       brand: "AULA" as MouseStatus["brand"],
       name: "AULA SC580",
-      batteryPercent: battery !== undefined && battery <= 100 ? battery : null,
-      batteryState: "Unknown",
+      batteryPercent: !charging && battery !== undefined && battery <= 100 ? battery : null,
+      batteryState: charging ? "Charging" : "Discharging",
       dpi: 0,
       pollingRateHz,
       supportedPollingRates: AULA_SC580_POLLING_RATES,

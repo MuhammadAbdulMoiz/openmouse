@@ -120,7 +120,7 @@ describe("aula client", () => {
     assert.equal(status.dpi, 0);
     assert.equal("activeDpiStage" in status, false);
     assert.equal(status.batteryPercent, 0x3e);
-    assert.equal(status.batteryState, "Unknown");
+    assert.equal(status.batteryState, "Discharging");
     assert.equal(status.pollingRateHz, 250);
     assert.deepEqual(status.supportedPollingRates, [125, 250, 500, 1000]);
   });
@@ -132,6 +132,19 @@ describe("aula client", () => {
     assert.deepEqual(device.sent[0], pad("02 00 01 01 08").fill(0x08, 31));
     assert.equal(rate.bits, 0x08);
     await assert.rejects(new AulaSc580HidClient(mouse(), fast).setPollingRate(2000), /not supported/);
+  });
+
+  test("on the cable it reports Charging and hides the placeholder 100%", async () => {
+    // Captured over the cable: byte 8 = 01 (charging), byte 9 = 0x64.
+    const cableIdentify = (() => { const r = pad("30 00 01 0b 4d 31 33 37 01 16 11 aa 01 64 01"); r[31] = 0x20; return r; })();
+    const device = fakeDevice(0xff02, (frame, d) => {
+      if (frame[0] === 0x30) d.push(cableIdentify);
+      else if (frame[0] === 0x13) d.push(READ_REPLY);
+      else if (frame[0] === 0x12) d.push(buildAulaFrame(0x12, [0x04]));
+    });
+    const status = await new AulaSc580HidClient(device, fast).readStatus();
+    assert.equal(status.batteryState, "Charging");
+    assert.equal(status.batteryPercent, null);
   });
 
   test("an unknown rate byte reads as 0 rather than a guess", async () => {
@@ -193,5 +206,12 @@ describe("aula device-clients wiring", () => {
     assert.ok(await createSupportedClient(settings) instanceof AulaSc580HidClient);
     assert.ok(await clientSupportScore(settings) > await clientSupportScore(sibling));
     assert.deepEqual(await listLogicalDevices([sibling, settings]), [settings]);
+  });
+
+  test("cable and receiver collapse into one device and the cable wins", async () => {
+    const receiver = fakeDevice(0xff02);
+    const cable = Object.assign(fakeDevice(0xff02), { vendorId: 0x088d, productId: 0x062e, productName: "USB Gaming Mouse" });
+    assert.deepEqual(await listLogicalDevices([receiver, cable]), [cable]);
+    assert.deepEqual(await listLogicalDevices([receiver]), [receiver]);
   });
 });
