@@ -21,10 +21,40 @@ const CMD_READ_DPI = 0x13;
 const CMD_WRITE_DPI = 0x03;
 const CMD_READ_RATE = 0x12;
 const CMD_WRITE_RATE = 0x02;
+const CMD_READ_BUTTONS = 0x11;
+const CMD_WRITE_BUTTON = 0x01;
 const STAGE_COUNT = 6;
 /** One data byte, one bit per rate in this order (0x01 125 Hz ... 0x08 1000 Hz), as the vendor app writes it. */
 export const AULA_SC580_POLLING_RATES = [125, 250, 500, 1000];
 const WAKE_MESSAGE = "AULA SC580 did not answer. Move the mouse to wake it, then try again.";
+
+/** Slot order of the 0x11 button map: 6 slots x 3 bytes. */
+export const AULA_SC580_BUTTON_NAMES = ["Left", "Right", "Middle", "Back", "Forward", "DPI"] as const;
+
+/**
+ * The selectable actions, label to 3-byte code. First byte is the family: 0x20 mouse button bitmask,
+ * 0x50 DPI cycle, 0x70 disabled, 0x80 keyboard key (modifier mask, HID usage), 0x90 HID consumer usage.
+ */
+export const AULA_SC580_BUTTON_ACTIONS: readonly { readonly label: string; readonly code: readonly [number, number, number] }[] = [
+  { label: "Left click", code: [0x20, 0x01, 0x00] },
+  { label: "Right click", code: [0x20, 0x02, 0x00] },
+  { label: "Middle click", code: [0x20, 0x04, 0x00] },
+  { label: "Back", code: [0x20, 0x08, 0x00] },
+  { label: "Forward", code: [0x20, 0x10, 0x00] },
+  { label: "DPI cycle", code: [0x50, 0x01, 0x00] },
+  { label: "Disabled", code: [0x70, 0x00, 0x00] },
+  { label: "Cut", code: [0x80, 0x01, 0x1b] },
+  { label: "Copy", code: [0x80, 0x01, 0x06] },
+  { label: "Paste", code: [0x80, 0x01, 0x19] },
+  { label: "Play / pause", code: [0x90, 0xcd, 0x00] },
+  { label: "Stop", code: [0x90, 0xb7, 0x00] },
+  { label: "Volume up", code: [0x90, 0xe9, 0x00] },
+  { label: "Volume down", code: [0x90, 0xea, 0x00] },
+  { label: "Mute", code: [0x90, 0xe2, 0x00] },
+  { label: "Mail", code: [0x90, 0x8a, 0x01] },
+  { label: "My computer", code: [0x90, 0x94, 0x01] },
+  { label: "Browser home", code: [0x90, 0x23, 0x02] },
+];
 
 /** The vendor config grid: 50 to 10000 in steps of 50, then 10100 to 12000 in steps of 100. */
 export const AULA_SC580_DPI_OPTIONS: number[] = [
@@ -81,6 +111,24 @@ export function encodeAulaDpiWrite(header: number, stages: number[]): Uint8Array
   data[1] = header;
   stages.forEach((dpi, i) => { data[2 + i * 4] = aulaRawFromDpi(dpi); });
   return data;
+}
+
+/** One label per slot, in `AULA_SC580_BUTTON_NAMES` order; a code outside the table reads as `Custom (xx xx xx)`. */
+export function decodeAulaButtonMap(data: Uint8Array): string[] {
+  if (data.length !== AULA_SC580_BUTTON_NAMES.length * 3) throw new RangeError(`AULA SC580 button map must be ${AULA_SC580_BUTTON_NAMES.length * 3} bytes.`);
+  return AULA_SC580_BUTTON_NAMES.map((_, slot) => {
+    const code = data.slice(slot * 3, slot * 3 + 3);
+    const known = AULA_SC580_BUTTON_ACTIONS.find((a) => a.code.every((byte, i) => byte === code[i]));
+    return known?.label ?? `Custom (${Array.from(code, (byte) => byte.toString(16).padStart(2, "0")).join(" ")})`;
+  });
+}
+
+/** The 4 data bytes of a single-slot write: slot, then the action's 3-byte code. */
+export function encodeAulaButtonWrite(slot: number, label: string): Uint8Array {
+  if (!Number.isInteger(slot) || slot < 0 || slot >= AULA_SC580_BUTTON_NAMES.length) throw new RangeError(`AULA SC580 button slot must be 0..${AULA_SC580_BUTTON_NAMES.length - 1}.`);
+  const action = AULA_SC580_BUTTON_ACTIONS.find((a) => a.label === label);
+  if (!action) throw new RangeError(`AULA SC580 button action "${label}" is not supported.`);
+  return Uint8Array.of(slot, ...action.code);
 }
 
 export interface AulaSc580Options { replyTimeoutMs?: number; retries?: number; retryDelayMs?: number }
@@ -144,6 +192,7 @@ export class AulaSc580HidClient {
     // jumps straight to 100 on the cable, so it is not shown while charging.
     const charging = id[8] === 1;
     const battery = id[9];
+    const buttonMappings = await this.readButtons();
     const pollingRateHz = await this.readPollingRate();
     // dpi 0 means unknown (the active stage is not readable yet); so does pollingRateHz 0.
     return {
@@ -160,6 +209,9 @@ export class AulaSc580HidClient {
       liftOffDistance: null,
       firmware: [],
       dpiStages: stages,
+      buttonMappings,
+      buttonOptions: AULA_SC580_BUTTON_ACTIONS.map((a) => a.label),
+      fixedButtons: ["Left"],
       ui: { dpiStageEditor: { maxStages: STAGE_COUNT, countEditable: false, minDpi: 50, maxDpi: 12000, stepDpi: 50 } },
     };
   }
@@ -174,6 +226,19 @@ export class AulaSc580HidClient {
     const confirmed = (await this.readTable()).stages[stage]!;
     if (confirmed !== dpi) throw new Error(`AULA SC580 kept DPI ${confirmed} instead of ${dpi}.`);
     return confirmed;
+  }
+
+  /** Writes one slot, requires the echo, then re-reads the map to confirm. Left stays fixed. */
+  async setButtonMapping(button: string, label: string): Promise<void> {
+    const slot = (AULA_SC580_BUTTON_NAMES as readonly string[]).indexOf(button);
+    if (slot < 0) throw new Error(`${button} is not a button on the AULA SC580.`);
+    if (button === "Left") throw new Error("The AULA SC580 left button cannot be remapped.");
+    let data: Uint8Array;
+    try { data = encodeAulaButtonWrite(slot, label); } catch { throw new Error(`${label} is not supported by the AULA SC580.`); }
+    const echo = await this.exchange(CMD_WRITE_BUTTON, data);
+    if (echo.length !== data.length || data.some((byte, i) => byte !== echo[i])) throw new Error("AULA SC580 did not echo the button write.");
+    const confirmed = (await this.readButtons())[button];
+    if (confirmed !== label) throw new Error(`AULA SC580 kept ${confirmed} instead of ${label} on ${button}.`);
   }
 
   /** Writes the rate bit and returns the rate read back from the mouse. */
@@ -191,6 +256,11 @@ export class AulaSc580HidClient {
     const [bits] = await this.exchange(CMD_READ_RATE, []);
     const index = [1, 2, 4, 8].indexOf(bits ?? 0);
     return index < 0 ? 0 : AULA_SC580_POLLING_RATES[index]!;
+  }
+
+  private async readButtons(): Promise<Record<string, string>> {
+    const labels = decodeAulaButtonMap(await this.exchange(CMD_READ_BUTTONS, []));
+    return Object.fromEntries(AULA_SC580_BUTTON_NAMES.map((name, i) => [name, labels[i]!]));
   }
 
   private readTable(): Promise<{ header: number; stages: number[] }> {

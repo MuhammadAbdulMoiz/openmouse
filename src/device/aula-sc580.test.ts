@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test, { describe } from "node:test";
 
 import {
-  AULA_SC580_DPI_OPTIONS, AulaSc580HidClient, aulaDpiFromRaw, aulaRawFromDpi, buildAulaFrame, decodeAulaDpiTable, encodeAulaDpiWrite, parseAulaReply,
+  AULA_SC580_BUTTON_ACTIONS, AULA_SC580_BUTTON_NAMES, AULA_SC580_DPI_OPTIONS, AulaSc580HidClient, decodeAulaButtonMap, encodeAulaButtonWrite, aulaDpiFromRaw, aulaRawFromDpi, buildAulaFrame, decodeAulaDpiTable, encodeAulaDpiWrite, parseAulaReply,
 } from "./aula-sc580.ts";
 import { clientSupportScore, createSupportedClient, listLogicalDevices } from "./device-clients.ts";
 
@@ -12,6 +12,8 @@ const pad = (text: string) => { const out = new Uint8Array(32); out.set(hex(text
 const WRITE_FRAME = hex("03 00 01 1b 00 16 10 00 00 00 26 00 00 00 30 00 00 00 40 00 00 00 80 00 00 00 dc 00 00 00 00 18");
 const READ_REPLY = hex("13 00 01 19 16 10 00 00 00 26 00 00 00 30 00 00 00 40 00 00 00 80 00 00 00 dc 00 00 00 00 00 18");
 const IDENTIFY_REPLY = (() => { const r = pad("30 00 01 0b 4d 31 33 37 01 16 11 aa 00 3e 01"); r[31] = 0xf9; return r; })();
+const FACTORY_MAP = [0x20, 0x01, 0x00, 0x20, 0x02, 0x00, 0x20, 0x04, 0x00, 0x20, 0x08, 0x00, 0x20, 0x10, 0x00, 0x50, 0x01, 0x00];
+const FACTORY_LABELS = { Left: "Left click", Right: "Right click", Middle: "Middle click", Back: "Back", Forward: "Forward", DPI: "DPI cycle" };
 const STAGES = [800, 1900, 2400, 3200, 6400, 12000];
 
 interface FakeDevice extends HIDDevice { sent: Uint8Array[]; push(payload: Uint8Array): void }
@@ -44,10 +46,12 @@ function fakeDevice(usagePage = 0xff02, respond?: (frame: Uint8Array, device: Fa
 }
 
 /** A device that behaves like the mouse: identify, table read and echoed write. */
-function mouse(stages = [...STAGES], rate = { bits: 0x02 }) {
+function mouse(stages = [...STAGES], rate = { bits: 0x02 }, buttons = [...FACTORY_MAP]) {
   return fakeDevice(0xff02, (frame, device) => {
     if (frame[0] === 0x30) device.push(IDENTIFY_REPLY);
     else if (frame[0] === 0x12) device.push(buildAulaFrame(0x12, [rate.bits]));
+    else if (frame[0] === 0x11) device.push(buildAulaFrame(0x11, buttons));
+    else if (frame[0] === 0x01) { buttons.splice(frame[4]! * 3, 3, frame[5]!, frame[6]!, frame[7]!); device.push(frame); }
     else if (frame[0] === 0x02) { rate.bits = frame[4]!; device.push(frame); }
     else if (frame[0] === 0x13) {
       const data = [0x16, ...stages.flatMap((dpi) => [aulaRawFromDpi(dpi), 0, 0, 0])];
@@ -103,6 +107,51 @@ describe("aula frames", () => {
   });
 });
 
+describe("aula buttons", () => {
+  const map = () => Uint8Array.from(FACTORY_MAP);
+
+  test("button writes match the vendor captures byte for byte", () => {
+    for (const [slot, label, frame, sum] of [
+      [4, "Back", "01 00 01 04 04 20 08 00", 0x2c],
+      [1, "Volume up", "01 00 01 04 01 90 e9 00", 0x7a],
+      [3, "Copy", "01 00 01 04 03 80 01 06", 0x8a],
+    ] as const) {
+      const expected = pad(frame);
+      expected[31] = sum;
+      assert.deepEqual(buildAulaFrame(0x01, encodeAulaButtonWrite(slot, label)), expected);
+    }
+  });
+
+  test("the factory button map decodes to the stock actions", () => {
+    assert.deepEqual(decodeAulaButtonMap(map()), ["Left click", "Right click", "Middle click", "Back", "Forward", "DPI cycle"]);
+    assert.deepEqual(AULA_SC580_BUTTON_NAMES, ["Left", "Right", "Middle", "Back", "Forward", "DPI"]);
+    assert.equal(AULA_SC580_BUTTON_ACTIONS.length, 18);
+  });
+
+  test("every table action round trips through a slot", () => {
+    for (const { label } of AULA_SC580_BUTTON_ACTIONS) {
+      const data = encodeAulaButtonWrite(5, label);
+      assert.equal(data.length, 4);
+      const m = map();
+      m.set(data.slice(1), 15);
+      assert.equal(decodeAulaButtonMap(m)[5], label);
+    }
+  });
+
+  test("codes outside the table decode as Custom and decode is strict", () => {
+    const m = map();
+    m.set([0x50, 0x02, 0x00], 15);
+    m.set([0x40, 0x32, 0x03], 0);
+    assert.deepEqual([decodeAulaButtonMap(m)[5], decodeAulaButtonMap(m)[0]], ["Custom (50 02 00)", "Custom (40 32 03)"]);
+    for (const length of [0, 17, 19]) assert.throws(() => decodeAulaButtonMap(new Uint8Array(length)), RangeError);
+  });
+
+  test("button write rejects bad slots and unknown labels", () => {
+    for (const slot of [-1, 6, 1.5, NaN]) assert.throws(() => encodeAulaButtonWrite(slot, "Back"), RangeError);
+    for (const label of ["Custom (50 02 00)", "back", ""]) assert.throws(() => encodeAulaButtonWrite(1, label), RangeError);
+  });
+});
+
 describe("aula support", () => {
   test("isSupported needs the vendor pair and the 0xff02 collection", () => {
     assert.equal(AulaSc580HidClient.isSupported(fakeDevice(0xff02)), true);
@@ -126,6 +175,50 @@ describe("aula client", () => {
     assert.deepEqual(status.supportedPollingRates, [125, 250, 500, 1000]);
   });
 
+  test("readStatus reports the button map, the options and the fixed Left button", async () => {
+    const status = await new AulaSc580HidClient(mouse(), fast).readStatus();
+    assert.deepEqual(status.buttonMappings, FACTORY_LABELS);
+    assert.equal(status.buttonOptions?.length, 18);
+    assert.equal(status.buttonOptions?.[0], "Left click");
+    assert.deepEqual(status.fixedButtons, ["Left"]);
+  });
+
+  test("a malformed button map rejects readStatus immediately", async () => {
+    const device = fakeDevice(0xff02, (frame, d) => {
+      if (frame[0] === 0x30) d.push(IDENTIFY_REPLY);
+      else if (frame[0] === 0x13) d.push(READ_REPLY);
+      else if (frame[0] === 0x11) d.push(buildAulaFrame(0x11, FACTORY_MAP.slice(0, 17)));
+    });
+    await assert.rejects(new AulaSc580HidClient(device, fast).readStatus(), Error);
+    assert.deepEqual(device.sent.map((frame) => frame[0]), [0x30, 0x13, 0x11]);
+  });
+
+  test("setButtonMapping writes one slot, then re-reads and confirms", async () => {
+    const buttons = [...FACTORY_MAP];
+    const device = mouse(undefined, undefined, buttons);
+    await new AulaSc580HidClient(device, fast).setButtonMapping("Back", "Volume up");
+    assert.deepEqual(device.sent.map((frame) => frame[0]), [0x01, 0x11]);
+    assert.deepEqual(device.sent[0], buildAulaFrame(0x01, [3, 0x90, 0xe9, 0x00]));
+    assert.deepEqual(buttons.slice(9, 12), [0x90, 0xe9, 0x00]);
+  });
+
+  test("setButtonMapping refuses Left, bad buttons and unknown actions without sending", async () => {
+    const device = mouse();
+    const client = new AulaSc580HidClient(device, fast);
+    await assert.rejects(client.setButtonMapping("Left", "Mute"), /left button/);
+    await assert.rejects(client.setButtonMapping("Side", "Mute"), /not a button/);
+    await assert.rejects(client.setButtonMapping("Back", "Custom (50 02 00)"), /not supported/);
+    assert.equal(device.sent.length, 0);
+  });
+
+  test("setButtonMapping throws when the re-read does not show the new action", async () => {
+    const device = fakeDevice(0xff02, (frame, d) => {
+      if (frame[0] === 0x01) d.push(frame);
+      else if (frame[0] === 0x11) d.push(buildAulaFrame(0x11, FACTORY_MAP));
+    });
+    await assert.rejects(new AulaSc580HidClient(device, fast).setButtonMapping("Back", "Mute"), /kept Back instead of Mute/);
+  });
+
   test("setPollingRate writes the vendor's rate bit and confirms it", async () => {
     const rate = { bits: 0x02 };
     const device = mouse(undefined, rate);
@@ -141,6 +234,7 @@ describe("aula client", () => {
     const device = Object.assign(fakeDevice(0xff02, (frame, d) => {
       if (frame[0] === 0x30) d.push(cableIdentify);
       else if (frame[0] === 0x13) d.push(READ_REPLY);
+      else if (frame[0] === 0x11) d.push(buildAulaFrame(0x11, FACTORY_MAP));
       else if (frame[0] === 0x12) d.push(buildAulaFrame(0x12, [0x04]));
     }), { vendorId: 0x088d, productId: 0x062e });
     const status = await new AulaSc580HidClient(device, fast).readStatus();
