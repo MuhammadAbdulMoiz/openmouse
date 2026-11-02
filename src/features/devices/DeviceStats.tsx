@@ -5,6 +5,7 @@ import * as control from "../../device/controller";
 import { connectionText, t } from "../../i18n/index";
 import type { InterfaceLocale } from "../settings/interface-preferences";
 import { BatteryIcon } from "../../shared/ui";
+import { batteryIconState } from "../../shared/battery-icon";
 
 export function ConnectionIcon({ type, transport }: { type: string | null | undefined; transport?: "bridge" | "webhid" }): ReactNode {
   const value = (type ?? "").toLowerCase();
@@ -40,6 +41,12 @@ export function DeviceStats({
           <BatteryIcon percent={status.batteryPercent} state={status.batteryState} />
           <b>{status.batteryPercent}%</b>
           {estimate && full ? <span className="om-muted">{estimate.time}</span> : null}
+        </span>
+      ) : batteryIconState(null, status.batteryState) === "charging" ? (
+        // Some mice report no level while charging; still say so.
+        <span className="om-stat">
+          <BatteryIcon percent={null} state={status.batteryState} />
+          <b>{t(locale, "bat.charging")}</b>
         </span>
       ) : null}
       {status.pollingRateHz > 0 ? (

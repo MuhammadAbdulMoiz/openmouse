@@ -16,6 +16,7 @@ import type { ControlSnapshot } from "../device/types";
 import { deviceImage } from "../shared/device-images";
 import { BridgeStatusButton } from "../features/bridge/BridgeStatus";
 import { BatteryIcon } from "../shared/ui";
+import { batteryIconState } from "../shared/battery-icon";
 
 export const OPENMOUSE_URL = "https://openmouse.app/";
 
@@ -106,6 +107,11 @@ function SidebarDeviceRow({
               <>
                 <BatteryIcon percent={status.batteryPercent} state={status.batteryState} />
                 <span>{status.batteryPercent}%</span>
+              </>
+            ) : status && batteryIconState(null, status.batteryState) === "charging" ? (
+              <>
+                <BatteryIcon percent={null} state={status.batteryState} />
+                <span>{t(locale, "bat.charging")}</span>
               </>
             ) : (
               <span>{live ? t(locale, "side.connected") : t(locale, "home.notConnected")}</span>

@@ -152,6 +152,7 @@ export class AulaSc580HidClient {
       name: "AULA SC580",
       batteryPercent: !charging && battery !== undefined && battery <= 100 ? battery : null,
       batteryState: charging ? "Charging" : "Discharging",
+      connectionType: AulaSc580HidClient.isWired(this.device) ? "Wired" : "Wireless",
       dpi: 0,
       pollingRateHz,
       supportedPollingRates: AULA_SC580_POLLING_RATES,

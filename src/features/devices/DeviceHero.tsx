@@ -7,6 +7,7 @@ import type { ControlSnapshot, WorkspaceTab } from "../../device/types";
 import { deviceImage, isUnknownDevice } from "../../shared/device-images";
 import { KeyboardArt } from "../../shared/KeyboardArt";
 import { ConnectionIcon } from "./DeviceStats";
+import { batteryIconState } from "../../shared/battery-icon";
 
 const ARTWORK_DISCUSSION_URL =
   "https://github.com/OpenMouse-Project/openmouse/discussions/new?category=artwork-request";
@@ -159,6 +160,9 @@ export function CurrentSetupPanel({ snapshot }: { snapshot: ControlSnapshot }): 
       unit: "%",
       sub: displayText(locale, status.batteryState),
     });
+  } else if (batteryIconState(null, status.batteryState) === "charging") {
+    // No level while charging on some mice; show the state instead of a number.
+    figures.push({ key: "battery", label: t(locale, "ov.batteryLabel"), value: t(locale, "bat.charging") });
   }
   if (status.activeProfile != null) {
     figures.push({ key: "profile", label: t(locale, "ov.onboardProfile"), value: String(status.activeProfile) });

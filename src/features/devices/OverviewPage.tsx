@@ -65,6 +65,7 @@ import { cardAvailability } from "./cards/availability";
 import { TeevolutionProfileCard } from "./cards/teevolution/ProfileCard";
 import { deviceImage } from "../../shared/device-images";
 import { BatteryIcon } from "../../shared/ui";
+import { batteryIconState } from "../../shared/battery-icon";
 import { BatteryHistoryPanel, CurrentSetupPanel, DeviceHero } from "./DeviceHero";
 import { DevicesHome } from "./DevicesHome";
 import { availableKeyboardWorkspaceTabs, availableWorkspaceTab, availableWorkspaceTabs } from "./workspace-tabs";
@@ -301,6 +302,12 @@ export function DeviceShowcaseSidebar({ snapshot }: { snapshot: ControlSnapshot 
             {batteryEstimate ? (
               <span title={displayText(locale, `${displayText(locale, batteryEstimate.time)} ${displayText(locale, batteryEstimate.label)}`)}>{displayText(locale, " · ")}{displayText(locale, batteryEstimate.time)}</span>
             ) : null}
+          </span>
+        ) : batteryIconState(null, status.batteryState) === "charging" ? (
+          <span className="device-showcase-status-detail">
+            {displayText(locale, " · ")}
+            <BatteryIcon percent={null} state={status.batteryState} />
+            {t(locale, "bat.charging")}
           </span>
         ) : null}
       </div>
