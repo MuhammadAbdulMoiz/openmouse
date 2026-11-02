@@ -15,6 +15,7 @@ import {
   pickFlashLiftOffTarget,
   pickFlashPollRateTarget,
   pollingSampleResult,
+  runFlashRoundTrip,
   verdictFor,
   type FlashSettingRoundTrip,
   type HardwareTestReport,
@@ -240,32 +241,7 @@ export function HardwareTestPage({ snapshot }: { snapshot: ControlSnapshot }): R
             aborted = true;
             return { setting: leg.setting, current: leg.current, target: leg.target, status: "skip", detail: "stopped by user." };
           }
-          if (!leg.stageTarget()) {
-            return { setting: leg.setting, current: leg.current, target: leg.target, status: "fail", detail: "the write was rejected by the driver." };
-          }
-          let written = false;
-          try {
-            await control.flashPendingChanges();
-            written = true;
-          } catch {
-            written = false;
-          }
-          if (!written) {
-            return { setting: leg.setting, current: leg.current, target: leg.target, status: "fail", detail: "the flash write was not executed." };
-          }
-          if (leg.read() !== leg.targetRaw) {
-            return { setting: leg.setting, current: leg.current, target: leg.target, status: "fail", detail: `wrote ${leg.target} but read back something else — the write did not stick.` };
-          }
-          try {
-            leg.stageRestore();
-            await control.flashPendingChanges();
-            if (leg.read() !== leg.currentRaw) {
-              return { setting: leg.setting, current: leg.current, target: leg.target, status: "fail", detail: `restore to ${leg.current} failed after reading back ${leg.target} — device settings may have changed.` };
-            }
-          } catch {
-            return { setting: leg.setting, current: leg.current, target: leg.target, status: "fail", detail: `restore to ${leg.current} failed after reading back ${leg.target} — device settings may have changed.` };
-          }
-          return { setting: leg.setting, current: leg.current, target: leg.target, status: "pass", detail: `wrote ${leg.target} → read back → restored ${leg.current}` };
+          return runFlashRoundTrip(leg, control.flashPendingChanges, control.revertPendingChanges);
         };
 
         let flashResult: HardwareTestResult;
@@ -283,7 +259,8 @@ export function HardwareTestPage({ snapshot }: { snapshot: ControlSnapshot }): R
 
             // Setting 1: DPI — round-trip (write → read-back → restore).
             const dpiCurrent = live.status.dpi;
-            if (dpiCurrent === null) {
+            // 0 means the driver cannot read the live DPI, so there is nothing to restore to.
+            if (dpiCurrent === null || dpiCurrent === 0) {
               legs.push({ setting: "DPI", current: "—", target: "—", status: "skip", detail: "no DPI value is reported on this device." });
             } else {
               const dpiTarget = pickFlashDpiTarget(dpiCurrent, live.dpiOptions);
@@ -696,7 +673,7 @@ export function HardwareTestPage({ snapshot }: { snapshot: ControlSnapshot }): R
                 {info.dpi !== null && (
                   <div className="mouse-test-device-row">
                     <span className="mouse-test-device-key">{t(locale, "test.dpi")}</span>
-                    <span className="mouse-test-device-val">{displayText(locale, info.dpi.toLocaleString())}</span>
+                    <span className="mouse-test-device-val">{displayText(locale, info.dpi > 0 ? info.dpi.toLocaleString() : "–")}</span>
                   </div>
                 )}
                 {info.dpiStages && info.dpiStages.length > 0 && (

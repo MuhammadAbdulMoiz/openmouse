@@ -11,6 +11,7 @@ import {
   pickFlashLiftOffTarget,
   pickFlashPollRateTarget,
   pollingSampleResult,
+  runFlashRoundTrip,
   verdictFor,
   type HardwareTestReport,
   type HardwareTestResult,
@@ -190,6 +191,18 @@ test("a 42000 DPI top stage (PAW3950) is in range, not flagged as garbage", () =
   assert.equal(results.find((result) => result.key === "flashRead")?.status, "pass");
 });
 
+test("an unreported live DPI (0) skips DPI read-back; flash read-back then needs the stage table", () => {
+  // AULA SC580: stages and polling read back, but there is no active-stage read, so dpi is 0.
+  const checks = (dpiStages?: number[]) => automaticChecks(
+    deviceInfoFromSnapshot(snapshotFor({ status: mouseStatus({ dpi: 0, dpiStages, pollingRateHz: 500 }), devices: [] })),
+  );
+  const withStages = checks([800, 1900, 2400, 3200, 6400, 12_000]);
+  assert.equal(withStages.find((result) => result.key === "dpi")?.status, "skip");
+  assert.equal(withStages.find((result) => result.key === "dpi")?.detail, "Not reported by this device.");
+  assert.equal(withStages.find((result) => result.key === "flashRead")?.status, "pass");
+  assert.equal(checks(undefined).find((result) => result.key === "flashRead")?.status, "fail");
+});
+
 test("read-back checks fail on driver fallback values, pass once the driver verified them", () => {
   // Ticket #0126: the WE driver's reads failed and it filled in 800 DPI / 1000 Hz.
   const fallback = { batteryPercent: null, dpi: 800, pollingRateHz: 1000, liftOffDistance: null };
@@ -352,4 +365,40 @@ test("pollingSampleResult is inconclusive when too little movement was captured"
 test("pollingSampleResult falls back to 1000 Hz when no reported rate exists", () => {
   const noReported = pollingSampleResult({ events: 200, avgHz: 900, peakHz: 950, stability: 90, reportedHz: null });
   assert.equal(noReported.status, "pass");
+});
+
+test("flash round-trip counts only a \"written\" flash result, for the write and the restore", async () => {
+  // A setting whose staged preview reads back immediately, like the controller's snapshot does.
+  const leg = () => {
+    let value: unknown = 500;
+    return {
+      setting: "Poll rate", current: "500 Hz", target: "1,000 Hz", currentRaw: 500, targetRaw: 1000,
+      stageTarget: () => { value = 1000; return true; },
+      stageRestore: () => { value = 500; return true; },
+      read: () => value,
+    };
+  };
+  const results = (...outcomes: string[]) => { let call = 0; return async () => outcomes[call++] ?? "written"; };
+  let discards = 0;
+  const discard = () => { discards += 1; };
+  const run = async (flash: () => Promise<string>) => {
+    discards = 0;
+    return runFlashRoundTrip(leg(), flash, discard);
+  };
+
+  assert.equal((await run(results("written", "written"))).status, "pass");
+  assert.equal(discards, 0, "a clean round-trip leaves nothing to discard");
+  for (const rejected of ["failed", "partial", "unchanged", "busy", "stale"]) {
+    const write = await run(results(rejected));
+    assert.equal(write.status, "fail", `write ${rejected}`);
+    assert.match(write.detail, /not executed/);
+    assert.equal(discards, 1, `the unflashed target is discarded after write ${rejected}`);
+    const restore = await run(results("written", rejected));
+    assert.equal(restore.status, "fail", `restore ${rejected}`);
+    assert.match(restore.detail, /restore to 500 Hz failed/);
+    assert.equal(discards, 1, `the unflashed restore is discarded after restore ${rejected}`);
+  }
+  const thrown = await run(async () => { throw new Error("boom"); });
+  assert.equal(thrown.status, "fail");
+  assert.equal(discards, 1);
 });

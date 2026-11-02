@@ -194,11 +194,16 @@ export function automaticChecks(info: HardwareDeviceInfo): HardwareTestResult[] 
   });
 
   const dpiOk = info.dpi !== null && info.dpi > 0 && info.dpi <= MAX_PLAUSIBLE_DPI;
+  // dpi 0 is a driver saying it cannot read the live DPI (e.g. no active-stage read), not a bad value.
+  const dpiUnreported = info.dpi === 0;
   results.push({
     key: "dpi",
     label: "DPI read-back",
-    status: dpiOk ? "pass" : "fail",
-    detail: dpiOk ? `${info.dpi!.toLocaleString()} DPI` : info.dpi === null ? "The sensor DPI was not read from the device." : "Reported DPI is out of range.",
+    status: dpiOk ? "pass" : dpiUnreported ? "skip" : "fail",
+    detail: dpiOk
+      ? `${info.dpi!.toLocaleString()} DPI`
+      : dpiUnreported ? "Not reported by this device."
+      : info.dpi === null ? "The sensor DPI was not read from the device." : "Reported DPI is out of range.",
   });
 
   const rate = info.pollingRateHz;
@@ -300,7 +305,9 @@ export function automaticChecks(info: HardwareDeviceInfo): HardwareTestResult[] 
   const lodOk = info.liftOffDistance === null || LOD_VALUES.has(info.liftOffDistance);
   const batteryOk = info.batteryPercent === null || (info.batteryPercent >= 0 && info.batteryPercent <= 100);
   const stagesOk = !info.dpiStages || info.dpiStages.length === 0 || info.dpiStages.every((value) => value > 0 && value <= MAX_PLAUSIBLE_DPI);
-  const flashOk = dpiOk && rate !== null && rate > 0 && lodOk && batteryOk && stagesOk;
+  // An unreported live DPI is only acceptable when the stage table was read instead.
+  const dpiFieldOk = dpiOk || (dpiUnreported && (info.dpiStages?.length ?? 0) > 0);
+  const flashOk = dpiFieldOk && rate !== null && rate > 0 && lodOk && batteryOk && stagesOk;
   results.push({
     key: "flashRead",
     label: "Flash / EEPROM read-back",
@@ -376,6 +383,58 @@ export interface FlashSettingRoundTrip {
   target: string;
   status: HardwareTestStatus;
   detail: string;
+}
+
+/** One setting to round-trip: stage a target, flash, read back, then restore the original. */
+export interface FlashLeg {
+  setting: string;
+  current: string;
+  target: string;
+  currentRaw: unknown;
+  targetRaw: unknown;
+  stageTarget: () => boolean;
+  stageRestore: () => boolean;
+  read: () => unknown;
+}
+
+/**
+ * Write → read back → restore for one setting. `flash` is the controller's
+ * flashPendingChanges, which reports a rejected write in its result rather than
+ * throwing, so only "written" counts as a write that happened. `discard` drops a
+ * change left staged by a flash that did not run (the suite only starts with
+ * nothing staged), so a failed check never leaves a value waiting for Apply.
+ */
+export async function runFlashRoundTrip(
+  leg: FlashLeg,
+  flash: () => Promise<string>,
+  discard: () => void,
+): Promise<FlashSettingRoundTrip> {
+  const outcome = (status: HardwareTestStatus, detail: string): FlashSettingRoundTrip => (
+    { setting: leg.setting, current: leg.current, target: leg.target, status, detail }
+  );
+  const restoreFailed = `restore to ${leg.current} failed after reading back ${leg.target} — device settings may have changed.`;
+  if (!leg.stageTarget()) return outcome("fail", "the write was rejected by the driver.");
+  let written = false;
+  try {
+    written = (await flash()) === "written";
+  } catch {
+    written = false;
+  }
+  if (!written) {
+    discard();
+    return outcome("fail", "the flash write was not executed.");
+  }
+  if (leg.read() !== leg.targetRaw) return outcome("fail", `wrote ${leg.target} but read back something else — the write did not stick.`);
+  try {
+    leg.stageRestore();
+    const restored = (await flash()) === "written";
+    if (!restored) discard();
+    if (!restored || leg.read() !== leg.currentRaw) return outcome("fail", restoreFailed);
+  } catch {
+    discard();
+    return outcome("fail", restoreFailed);
+  }
+  return outcome("pass", `wrote ${leg.target} → read back → restored ${leg.current}`);
 }
 
 interface FlashWriteResultArgs {
