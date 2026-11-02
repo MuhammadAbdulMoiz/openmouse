@@ -1,6 +1,7 @@
 import { emptyKeyboardWorkspace } from "./keyboard-workspace.ts";
 import { track, deviceProps, scrubError } from "../platform/analytics";
 import type { KeyboardCommand } from "./keyboard-workspace.ts";
+import { previewButtonAction } from "./button-action.ts";
 import { cachedBatterySamples, estimateBatteryTime, estimateFromRatedLife, ratedBattery, recordBatterySample, type BatteryMode } from "../features/devices/battery-history";
 import { bridgeEmptyResultMessage, isBridgeHidActive } from "../features/bridge/bridge-hid";
 import { applyBridgeNativeSettings } from "../features/bridge/bridge";
@@ -6665,7 +6666,7 @@ export function applyDeviceButtonMapping(button: string, action: string): void {
     progress: st("ctl.progRemap"),
     preview: (status) => {
       if (status.buttonMappings) {
-        status.buttonMappings = { ...status.buttonMappings, [button]: action };
+        status.buttonMappings = { ...status.buttonMappings, [button]: previewButtonAction(status, button, action) };
       }
     },
     apply: async () => {

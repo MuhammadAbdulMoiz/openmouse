@@ -1,6 +1,7 @@
 import { displayText } from "../../../i18n/index";
+import { composeShortcut, SHORTCUT_OPTION, shortcutDisplay } from "./button-shortcut";
 import { useUiLocale } from "../../../shared/ui-locale";
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { Fragment, useEffect, useRef, useState, type ReactNode } from "react";
 import { Plus, Save, Trash2 } from "lucide-react";
 import {
   EGG_BUTTON_MAPPINGS,
@@ -2641,6 +2642,12 @@ export function WallhackMacroCard({ snapshot }: { snapshot: ControlSnapshot }): 
  */
 export function ButtonMappingCard({ snapshot }: { snapshot: ControlSnapshot }): ReactNode {
   const status = snapshot.status;
+  // Open shortcut editors by button. `base` is the assignment shown when it was opened; a changed
+  // assignment (or another device) discards the draft.
+  const [drafts, setDrafts] = useState<Record<string, { base: string; modifiers: string[]; key: string }>>({});
+  const selectedDevice = snapshot.devices.find((device) => device.selected);
+  const deviceKey = selectedDevice ? `${selectedDevice.index}:${selectedDevice.vendorId}:${selectedDevice.productId}` : "";
+  useEffect(() => setDrafts({}), [deviceKey]);
   if (!status?.buttonMappings || !status.buttonOptions?.length) return null;
   const locale = snapshot.preferences.locale;
   const options = status.buttonOptions;
@@ -2655,7 +2662,16 @@ export function ButtonMappingCard({ snapshot }: { snapshot: ControlSnapshot }): 
   const resettingButtons = pendingButtons.has("ksnake-button-reset");
   // fixedButtons lands with mouse-protocol#68; read defensively so this
   // builds against the published protocol until then.
-  const fixed = new Set((status as unknown as { fixedButtons?: readonly string[] }).fixedButtons ?? []);
+  const extra = status as unknown as { fixedButtons?: readonly string[]; shortcutKeys?: readonly string[]; shortcutModifiers?: readonly string[] };
+  const fixed = new Set(extra.fixedButtons ?? []);
+  // Same story for the shortcut editor: the driver publishes the keys and modifiers it accepts.
+  const shortcutKeys = extra.shortcutKeys ?? [];
+  const shortcutModifiers = extra.shortcutModifiers ?? [];
+  const canShortcut = shortcutKeys.length > 0 && !selectedM2NexProfile;
+  const closeDraft = (button: string): void => setDrafts((current) => {
+    const { [button]: _closed, ...rest } = current;
+    return rest;
+  });
   return (
     <article id="button-mapping-settings" className="setting-card">
       <div className="setting-heading compact"><div><h2>{t(locale, "map.remap")}</h2></div></div>
@@ -2666,34 +2682,77 @@ export function ButtonMappingCard({ snapshot }: { snapshot: ControlSnapshot }): 
             : mappings[button] ?? deviceAssigned;
           const selectId = `button-${button.toLowerCase()}-select`;
           const isFixed = fixed.has(button) || (isNoirKsnakeStatus(status) && button === "Left");
+          const draft = drafts[button]?.base === assigned ? drafts[button] : undefined;
           return (
-            <label key={button} className={`button-map-row${isFixed ? " is-fixed" : ""}`} htmlFor={selectId}>
-              <span className="button-map-control">
-                <span className="button-map-index" aria-hidden="true">{displayText(locale, String(index + 1).padStart(2, "0"))}</span>
-                <span className="button-map-name">{displayText(locale, button)}</span>
-              </span>
-              <span className="button-map-connector" aria-hidden="true">{displayText(locale, "to")}</span>
-              <span className="button-map-select-wrap">
-                <select
-                  id={selectId}
-                  value={options.includes(assigned) ? assigned : ""}
-                  disabled={isFixed}
-                  onChange={(event) => {
-                    // M2-NEX edits its selected local profile slot; every other
-                    // driver writes straight through to the device.
-                    if (selectedM2NexProfile) {
-                      control.updateM2NexProfileButton(button, event.currentTarget.value);
-                      return;
-                    }
-                    control.applyDeviceButtonMapping(button, event.currentTarget.value);
-                  }}
-                >
-                  {/* A macro or an assignment this build cannot name still shows. */}
-                  {!options.includes(assigned) && <option value="">{displayText(locale, assigned)}</option>}
-                  {options.map((option) => <option key={option} value={option}>{displayText(locale, option)}</option>)}
-                </select>
-              </span>
-            </label>
+            <Fragment key={button}>
+              <div className={`button-map-row${isFixed ? " is-fixed" : ""}`}>
+                <span className="button-map-control">
+                  <span className="button-map-index" aria-hidden="true">{displayText(locale, String(index + 1).padStart(2, "0"))}</span>
+                  <label className="button-map-name" htmlFor={selectId}>{displayText(locale, button)}</label>
+                </span>
+                <span className="button-map-connector" aria-hidden="true">{displayText(locale, "to")}</span>
+                <span className="button-map-select-wrap">
+                  <select
+                    id={selectId}
+                    value={options.includes(assigned) ? assigned : ""}
+                    disabled={isFixed}
+                    onChange={(event) => {
+                      const next = event.currentTarget.value;
+                      if (next === SHORTCUT_OPTION) {
+                        setDrafts((current) => ({ ...current, [button]: { base: assigned, modifiers: [], key: shortcutKeys[0]! } }));
+                        return;
+                      }
+                      closeDraft(button);
+                      // M2-NEX edits its selected local profile slot; every other
+                      // driver writes straight through to the device.
+                      if (selectedM2NexProfile) {
+                        control.updateM2NexProfileButton(button, next);
+                        return;
+                      }
+                      control.applyDeviceButtonMapping(button, next);
+                    }}
+                  >
+                    {/* A macro or an assignment this build cannot name still shows. */}
+                    {!options.includes(assigned) && <option value="">{shortcutDisplay(locale, assigned)}</option>}
+                    {options.map((option) => <option key={option} value={option}>{displayText(locale, option)}</option>)}
+                    {canShortcut && !isFixed && <option value={SHORTCUT_OPTION}>{t(locale, "prof.keyboardShortcut")}</option>}
+                  </select>
+                </span>
+              </div>
+              {draft ? (
+                <div className="button-map-shortcut">
+                  <div className="button-map-shortcut-modifiers" role="group" aria-label={t(locale, "map.modifierKeys")}>
+                    {shortcutModifiers.map((modifier) => (
+                      <button
+                        key={modifier}
+                        type="button"
+                        className="om-btn"
+                        aria-pressed={draft.modifiers.includes(modifier)}
+                        onClick={() => setDrafts((current) => ({
+                          ...current,
+                          [button]: { ...draft, modifiers: draft.modifiers.includes(modifier) ? draft.modifiers.filter((m) => m !== modifier) : [...draft.modifiers, modifier] },
+                        }))}
+                      >{displayText(locale, modifier)}</button>
+                    ))}
+                  </div>
+                  <OptionMenu
+                    options={shortcutKeys.map((name) => ({ value: name, label: displayText(locale, name) }))}
+                    value={draft.key}
+                    ariaLabel={t(locale, "kb.wootingKey")}
+                    onChange={(key) => setDrafts((current) => ({ ...current, [button]: { ...draft, key } }))}
+                  />
+                  <button
+                    type="button"
+                    className="om-btn is-primary"
+                    onClick={() => {
+                      control.applyDeviceButtonMapping(button, composeShortcut(shortcutModifiers, new Set(draft.modifiers), draft.key));
+                      closeDraft(button);
+                    }}
+                  >{t(locale, "common.apply")}</button>
+                  <button type="button" className="om-btn is-ghost" onClick={() => closeDraft(button)}>{t(locale, "common.cancel")}</button>
+                </div>
+              ) : null}
+            </Fragment>
           );
         })}
       </div>

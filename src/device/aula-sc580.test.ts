@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test, { describe } from "node:test";
 
 import {
-  AULA_SC580_BUTTON_ACTIONS, AULA_SC580_BUTTON_NAMES, AULA_SC580_DPI_OPTIONS, AulaSc580HidClient, decodeAulaButtonMap, encodeAulaButtonWrite, aulaDpiFromRaw, aulaRawFromDpi, buildAulaFrame, decodeAulaDpiTable, encodeAulaDpiWrite, parseAulaReply,
+  AULA_SC580_BUTTON_ACTIONS, AULA_SC580_BUTTON_DEFAULTS, AULA_SC580_BUTTON_NAMES, AULA_SC580_SHORTCUT_KEYS, AULA_SC580_SHORTCUT_MODIFIERS, AULA_SC580_DPI_OPTIONS, AulaSc580HidClient, decodeAulaButtonMap, encodeAulaButtonWrite, aulaDpiFromRaw, aulaRawFromDpi, buildAulaFrame, decodeAulaDpiTable, encodeAulaDpiWrite, parseAulaReply,
 } from "./aula-sc580.ts";
 import { clientSupportScore, createSupportedClient, listLogicalDevices } from "./device-clients.ts";
 
@@ -178,9 +178,14 @@ describe("aula client", () => {
   test("readStatus reports the button map, the options and the fixed Left button", async () => {
     const status = await new AulaSc580HidClient(mouse(), fast).readStatus();
     assert.deepEqual(status.buttonMappings, FACTORY_LABELS);
-    assert.equal(status.buttonOptions?.length, 18);
-    assert.equal(status.buttonOptions?.[0], "Left click");
+    assert.equal(status.buttonOptions?.length, 19);
+    assert.deepEqual(status.buttonOptions?.slice(0, 2), ["Default", "Left click"]);
     assert.deepEqual(status.fixedButtons, ["Left"]);
+    const extra = status as typeof status & { buttonDefaults?: unknown; shortcutKeys?: string[]; shortcutModifiers?: unknown };
+    assert.deepEqual(extra.buttonDefaults, FACTORY_LABELS);
+    assert.equal(extra.shortcutKeys?.length, 63);
+    assert.deepEqual([extra.shortcutKeys?.[0], extra.shortcutKeys?.at(-1)], ["A", "Up arrow"]);
+    assert.deepEqual(extra.shortcutModifiers, ["Ctrl", "Shift"]);
   });
 
   test("a malformed button map rejects readStatus immediately", async () => {
@@ -200,6 +205,41 @@ describe("aula client", () => {
     assert.deepEqual(device.sent.map((frame) => frame[0]), [0x01, 0x11]);
     assert.deepEqual(device.sent[0], buildAulaFrame(0x01, [3, 0x90, 0xe9, 0x00]));
     assert.deepEqual(buttons.slice(9, 12), [0x90, 0xe9, 0x00]);
+  });
+
+  test("setButtonMapping Default restores each slot's factory code and confirms", async () => {
+    for (const slot of [1, 2, 3, 4, 5]) {
+      const buttons = [...FACTORY_MAP];
+      buttons.splice(slot * 3, 3, 0x70, 0x00, 0x00);
+      const device = mouse(undefined, undefined, buttons);
+      await new AulaSc580HidClient(device, fast).setButtonMapping(Object.keys(FACTORY_LABELS)[slot]!, "Default");
+      assert.deepEqual(device.sent.map((frame) => frame[0]), [0x01, 0x11]);
+      assert.deepEqual(buttons, FACTORY_MAP);
+    }
+  });
+
+  test("setButtonMapping writes shortcuts byte for byte and confirms them", async () => {
+    const buttons = [...FACTORY_MAP];
+    const device = mouse(undefined, undefined, buttons);
+    const client = new AulaSc580HidClient(device, fast);
+    await client.setButtonMapping("Back", "A");
+    await client.setButtonMapping("Forward", "Shift+A");
+    await client.setButtonMapping("Right", "Ctrl+X");
+    assert.deepEqual(device.sent[0], buildAulaFrame(0x01, [3, 0x80, 0x00, 0x04]));
+    assert.equal(device.sent[0]![31], 0x87);
+    assert.deepEqual(device.sent[2], buildAulaFrame(0x01, [4, 0x80, 0x02, 0x04]));
+    assert.equal(device.sent[2]![31], 0x8a);
+    assert.deepEqual(buttons.slice(3, 6), [0x80, 0x01, 0x1b]);
+    assert.equal((await client.readStatus()).buttonMappings?.Back, "A");
+  });
+
+  test("setButtonMapping rejects bad shortcuts without sending", async () => {
+    const device = mouse();
+    const client = new AulaSc580HidClient(device, fast);
+    for (const label of ["Alt+A", "Ctrl+Ctrl+A", "A+Ctrl", "Ctrl", "A+B", "Ctrl+Nope"]) {
+      await assert.rejects(client.setButtonMapping("Back", label), /not supported/);
+    }
+    assert.equal(device.sent.length, 0);
   });
 
   test("setButtonMapping refuses Left, bad buttons and unknown actions without sending", async () => {
@@ -310,4 +350,60 @@ describe("aula device-clients wiring", () => {
     assert.deepEqual(await listLogicalDevices([receiver, cable]), [cable]);
     assert.deepEqual(await listLogicalDevices([receiver]), [receiver]);
   });
+});
+
+const SHORTCUT_KEY_COUNT = AULA_SC580_SHORTCUT_KEYS.length;
+
+test("Default writes each slot's factory code", () => {
+  AULA_SC580_BUTTON_NAMES.forEach((name, slot) => {
+    assert.deepEqual(encodeAulaButtonWrite(slot, "Default"), Uint8Array.of(slot, ...FACTORY_MAP.slice(slot * 3, slot * 3 + 3)));
+    assert.equal(AULA_SC580_BUTTON_DEFAULTS[name], decodeAulaButtonMap(Uint8Array.from(FACTORY_MAP))[slot]);
+  });
+});
+
+test("shortcut table covers the requested keys", () => {
+  assert.equal(SHORTCUT_KEY_COUNT, 26 + 10 + 5 + 12 + 10);
+  assert.deepEqual(AULA_SC580_SHORTCUT_MODIFIERS.map((m) => m.name), ["Ctrl", "Shift"]);
+  assert.equal(AULA_SC580_SHORTCUT_KEYS.find((k) => k.name === "Up arrow")?.usage, 0x52);
+});
+
+test("shortcuts round trip across the key table", () => {
+  for (const { name, usage } of AULA_SC580_SHORTCUT_KEYS) {
+    for (const [prefix, mask] of [["", 0], ["Ctrl+", 1], ["Shift+", 2], ["Ctrl+Shift+", 3]] as const) {
+      const label = prefix + name;
+      const data = encodeAulaButtonWrite(3, label);
+      assert.deepEqual([...data], [3, 0x80, mask, usage]);
+      const map = Uint8Array.from(FACTORY_MAP);
+      map.set(data.slice(1), 9);
+      const decoded = decodeAulaButtonMap(map)[3];
+      // Ctrl+X, Ctrl+C and Ctrl+V are table actions and win.
+      assert.equal(decoded, { "Ctrl+X": "Cut", "Ctrl+C": "Copy", "Ctrl+V": "Paste" }[label] ?? label);
+    }
+  }
+});
+
+test("shortcut parsing is strict and accepts any modifier order", () => {
+  assert.deepEqual([...encodeAulaButtonWrite(3, "Shift+Ctrl+A")], [3, 0x80, 3, 4]);
+  for (const label of ["Alt+A", "Ctrl+Ctrl+A", "A+Ctrl", "Ctrl+", "Ctrl", "Shift+", "A+B", "Ctrl+Nope", "ctrl+a", "Ctrl+a", "+A", "Ctrl++A"]) {
+    assert.throws(() => encodeAulaButtonWrite(3, label), RangeError, label);
+  }
+});
+
+test("other modifier bits and unknown usages decode as Custom", () => {
+  const map = Uint8Array.from(FACTORY_MAP);
+  map.set([0x80, 0x04, 0x04], 3);
+  map.set([0x80, 0x01, 0x00], 6);
+  map.set([0x80, 0x03, 0x65], 9);
+  assert.deepEqual(decodeAulaButtonMap(map).slice(1, 4), ["Custom (80 04 04)", "Custom (80 01 00)", "Custom (80 03 65)"]);
+});
+
+test("captured shortcut frames match byte for byte", () => {
+  for (const [slot, label, frame, sum] of [
+    [3, "A", "01 00 01 04 03 80 00 04", 0x87],
+    [4, "Shift+A", "01 00 01 04 04 80 02 04", 0x8a],
+  ] as const) {
+    const expected = pad(frame);
+    expected[31] = sum;
+    assert.deepEqual(buildAulaFrame(0x01, encodeAulaButtonWrite(slot, label)), expected);
+  }
 });

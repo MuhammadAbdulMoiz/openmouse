@@ -113,22 +113,84 @@ export function encodeAulaDpiWrite(header: number, stages: number[]): Uint8Array
   return data;
 }
 
-/** One label per slot, in `AULA_SC580_BUTTON_NAMES` order; a code outside the table reads as `Custom (xx xx xx)`. */
-export function decodeAulaButtonMap(data: Uint8Array): string[] {
-  if (data.length !== AULA_SC580_BUTTON_NAMES.length * 3) throw new RangeError(`AULA SC580 button map must be ${AULA_SC580_BUTTON_NAMES.length * 3} bytes.`);
-  return AULA_SC580_BUTTON_NAMES.map((_, slot) => {
-    const code = data.slice(slot * 3, slot * 3 + 3);
-    const known = AULA_SC580_BUTTON_ACTIONS.find((a) => a.code.every((byte, i) => byte === code[i]));
-    return known?.label ?? `Custom (${Array.from(code, (byte) => byte.toString(16).padStart(2, "0")).join(" ")})`;
-  });
+/** Option that restores a slot's factory action; never a decoded label. */
+export const AULA_SC580_DEFAULT_OPTION = "Default";
+
+/** Factory action per button (read after a vendor reset). */
+export const AULA_SC580_BUTTON_DEFAULTS: Readonly<Record<(typeof AULA_SC580_BUTTON_NAMES)[number], string>> = {
+  Left: "Left click",
+  Right: "Right click",
+  Middle: "Middle click",
+  Back: "Back",
+  Forward: "Forward",
+  DPI: "DPI cycle",
+};
+
+/** Only these modifier bits are exposed; Alt and Win were not tested. Label order is this order. */
+export const AULA_SC580_SHORTCUT_MODIFIERS: readonly { readonly name: string; readonly bit: number }[] = [
+  { name: "Ctrl", bit: 0x01 },
+  { name: "Shift", bit: 0x02 },
+];
+
+/** Standard HID keyboard usages offered for shortcuts, in display order. */
+export const AULA_SC580_SHORTCUT_KEYS: readonly { readonly name: string; readonly usage: number }[] = [
+  ...Array.from({ length: 26 }, (_, i) => ({ name: String.fromCharCode(65 + i), usage: 0x04 + i })),
+  ...[..."1234567890"].map((name, i) => ({ name, usage: 0x1e + i })),
+  { name: "Enter", usage: 0x28 }, { name: "Escape", usage: 0x29 }, { name: "Backspace", usage: 0x2a },
+  { name: "Tab", usage: 0x2b }, { name: "Space", usage: 0x2c },
+  ...Array.from({ length: 12 }, (_, i) => ({ name: `F${i + 1}`, usage: 0x3a + i })),
+  { name: "Insert", usage: 0x49 }, { name: "Home", usage: 0x4a }, { name: "Page up", usage: 0x4b },
+  { name: "Delete", usage: 0x4c }, { name: "End", usage: 0x4d }, { name: "Page down", usage: 0x4e },
+  { name: "Right arrow", usage: 0x4f }, { name: "Left arrow", usage: 0x50 },
+  { name: "Down arrow", usage: 0x51 }, { name: "Up arrow", usage: 0x52 },
+];
+
+/** `Ctrl+Shift+A`, `Shift+F5` or `A`: modifiers in fixed order, then the key. Null for anything else. */
+function shortcutLabel(mask: number, usage: number): string | null {
+  const key = AULA_SC580_SHORTCUT_KEYS.find((k) => k.usage === usage);
+  const allowed = AULA_SC580_SHORTCUT_MODIFIERS.reduce((all, m) => all | m.bit, 0);
+  if (!key || (mask & ~allowed) !== 0) return null;
+  return [...AULA_SC580_SHORTCUT_MODIFIERS.filter((m) => mask & m.bit).map((m) => m.name), key.name].join("+");
 }
 
-/** The 4 data bytes of a single-slot write: slot, then the action's 3-byte code. */
+/** Strict: known modifiers once each, then exactly one known key. Returns the 3-byte code. */
+function parseShortcut(label: string): [number, number, number] {
+  const parts = label.split("+");
+  const last = parts.pop();
+  const key = AULA_SC580_SHORTCUT_KEYS.find((k) => k.name === last);
+  if (!key) throw new RangeError(`AULA SC580 button action "${label}" is not supported.`);
+  let mask = 0;
+  for (const part of parts) {
+    const modifier = AULA_SC580_SHORTCUT_MODIFIERS.find((m) => m.name === part);
+    if (!modifier || mask & modifier.bit) throw new RangeError(`AULA SC580 button action "${label}" is not supported.`);
+    mask |= modifier.bit;
+  }
+  return [0x80, mask, key.usage];
+}
+
+/** Label for one 3-byte code: the action table first, then a shortcut, else `Custom (xx xx xx)`. */
+export function decodeAulaButtonCode(code: ArrayLike<number>): string {
+  const known = AULA_SC580_BUTTON_ACTIONS.find((a) => a.code.every((byte, i) => byte === code[i]));
+  if (known) return known.label;
+  const shortcut = code[0] === 0x80 ? shortcutLabel(code[1]!, code[2]!) : null;
+  return shortcut ?? `Custom (${Array.from({ length: 3 }, (_, i) => code[i]!.toString(16).padStart(2, "0")).join(" ")})`;
+}
+
+/** One label per slot, in `AULA_SC580_BUTTON_NAMES` order; an unknown code reads as `Custom (xx xx xx)`. */
+export function decodeAulaButtonMap(data: Uint8Array): string[] {
+  if (data.length !== AULA_SC580_BUTTON_NAMES.length * 3) throw new RangeError(`AULA SC580 button map must be ${AULA_SC580_BUTTON_NAMES.length * 3} bytes.`);
+  return AULA_SC580_BUTTON_NAMES.map((_, slot) => decodeAulaButtonCode(data.slice(slot * 3, slot * 3 + 3)));
+}
+
+/**
+ * The 4 data bytes of a single-slot write: slot, then the 3-byte code of a table action, a shortcut
+ * label, or `Default` (the slot's factory action).
+ */
 export function encodeAulaButtonWrite(slot: number, label: string): Uint8Array {
   if (!Number.isInteger(slot) || slot < 0 || slot >= AULA_SC580_BUTTON_NAMES.length) throw new RangeError(`AULA SC580 button slot must be 0..${AULA_SC580_BUTTON_NAMES.length - 1}.`);
-  const action = AULA_SC580_BUTTON_ACTIONS.find((a) => a.label === label);
-  if (!action) throw new RangeError(`AULA SC580 button action "${label}" is not supported.`);
-  return Uint8Array.of(slot, ...action.code);
+  const name = label === AULA_SC580_DEFAULT_OPTION ? AULA_SC580_BUTTON_DEFAULTS[AULA_SC580_BUTTON_NAMES[slot]!] : label;
+  const action = AULA_SC580_BUTTON_ACTIONS.find((a) => a.label === name);
+  return Uint8Array.of(slot, ...(action ? action.code : parseShortcut(name)));
 }
 
 export interface AulaSc580Options { replyTimeoutMs?: number; retries?: number; retryDelayMs?: number }
@@ -195,6 +257,12 @@ export class AulaSc580HidClient {
     const buttonMappings = await this.readButtons();
     const pollingRateHz = await this.readPollingRate();
     // dpi 0 means unknown (the active stage is not readable yet); so does pollingRateHz 0.
+    // The published 0.49.0 MouseStatus has no fields for these; the UI reads them through a cast.
+    const shortcutFields = {
+      buttonDefaults: { ...AULA_SC580_BUTTON_DEFAULTS },
+      shortcutKeys: AULA_SC580_SHORTCUT_KEYS.map((k) => k.name),
+      shortcutModifiers: AULA_SC580_SHORTCUT_MODIFIERS.map((m) => m.name),
+    };
     return {
       // AULA is not in the protocol package's closed brand union.
       brand: "AULA" as MouseStatus["brand"],
@@ -210,7 +278,8 @@ export class AulaSc580HidClient {
       firmware: [],
       dpiStages: stages,
       buttonMappings,
-      buttonOptions: AULA_SC580_BUTTON_ACTIONS.map((a) => a.label),
+      buttonOptions: [AULA_SC580_DEFAULT_OPTION, ...AULA_SC580_BUTTON_ACTIONS.map((a) => a.label)],
+      ...shortcutFields,
       fixedButtons: ["Left"],
       ui: { dpiStageEditor: { maxStages: STAGE_COUNT, countEditable: false, minDpi: 50, maxDpi: 12000, stepDpi: 50 } },
     };
@@ -228,7 +297,7 @@ export class AulaSc580HidClient {
     return confirmed;
   }
 
-  /** Writes one slot, requires the echo, then re-reads the map to confirm. Left stays fixed. */
+  /** Writes one slot (an action, `Default` or a shortcut label), requires the echo, then re-reads the map to confirm. Left stays fixed. */
   async setButtonMapping(button: string, label: string): Promise<void> {
     const slot = (AULA_SC580_BUTTON_NAMES as readonly string[]).indexOf(button);
     if (slot < 0) throw new Error(`${button} is not a button on the AULA SC580.`);
@@ -237,8 +306,9 @@ export class AulaSc580HidClient {
     try { data = encodeAulaButtonWrite(slot, label); } catch { throw new Error(`${label} is not supported by the AULA SC580.`); }
     const echo = await this.exchange(CMD_WRITE_BUTTON, data);
     if (echo.length !== data.length || data.some((byte, i) => byte !== echo[i])) throw new Error("AULA SC580 did not echo the button write.");
+    const expected = decodeAulaButtonCode(data.subarray(1));
     const confirmed = (await this.readButtons())[button];
-    if (confirmed !== label) throw new Error(`AULA SC580 kept ${confirmed} instead of ${label} on ${button}.`);
+    if (confirmed !== expected) throw new Error(`AULA SC580 kept ${confirmed} instead of ${expected} on ${button}.`);
   }
 
   /** Writes the rate bit and returns the rate read back from the mouse. */

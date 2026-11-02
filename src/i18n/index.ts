@@ -1818,6 +1818,24 @@ const en = {
   "kb.readout": "Sensor ADC counts",
   "kb.multiNote": "Bulk edits use the selected key’s values as the starting point.",
 
+  "map.default": "Default",
+  "map.keyCtrl": "Ctrl",
+  "map.keyShift": "Shift",
+  "map.keyEnter": "Enter",
+  "map.keyEscape": "Escape",
+  "map.keyBackspace": "Backspace",
+  "map.keyTab": "Tab",
+  "map.keySpace": "Space",
+  "map.keyInsert": "Insert",
+  "map.keyDelete": "Delete",
+  "map.keyEnd": "End",
+  "map.keyPageUp": "Page up",
+  "map.keyPageDown": "Page down",
+  "map.keyLeft": "Left arrow",
+  "map.keyRight": "Right arrow",
+  "map.keyUp": "Up arrow",
+  "map.keyDown": "Down arrow",
+  "map.modifierKeys": "Modifier keys",
 } as const;
 
 export type I18nKey = keyof typeof en;

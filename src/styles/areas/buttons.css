@@ -15,6 +15,9 @@
 .button-map-index { display: inline-grid; place-items: center; width: 24px; height: 24px; flex: none; background: var(--well); color: var(--text-3); border-radius: var(--r-xs); font-size: var(--fs-small); font-variant-numeric: tabular-nums; }
 .button-map-name { color: var(--text-2); font-weight: 500; }
 .button-map-connector { display: none; }
+.button-map-shortcut { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding-block: 8px 12px; }
+.button-map-shortcut .option-menu { width: auto; min-width: 140px; }
+.button-map-shortcut .om-btn[aria-pressed="true"] { background: var(--accent-soft); color: var(--accent); box-shadow: inset 0 0 0 1px var(--accent); }
 .button-map-select-wrap { min-width: 0; }
 .button-map-select-wrap select { width: 100%; }
 #egg-spdt-settings .field-label { display: flex; justify-content: space-between; align-items: center; gap: 16px; min-height: 44px; margin: 0; border-top: 1px solid var(--line-1); }
