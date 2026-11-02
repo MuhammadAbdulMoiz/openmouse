@@ -274,3 +274,9 @@ package:
   **Needs a maintainer upload** to the `openmouse-devices` R2 bucket; the mapping in
   `src/ui/device-images.ts` is in place and falls back cleanly to the placeholder until then.
 
+
+`aula-sc580.png` (served locally from `public/devices/`) is original artwork,
+not a vendor render: it was generated with an image model for this repository
+from a written description of the AULA SC580's shape, using a retail listing
+photo only as a shape reference. It carries no logo or brand mark. Normalized
+to a 700×700 transparent canvas (~615 px mouse, centered).

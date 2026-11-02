@@ -684,7 +684,8 @@ export function DpiCard({ snapshot }: { snapshot: ControlSnapshot }): ReactNode 
       && (status?.dpiStages?.length ?? 0) > 0);
   const singleDpiAvailable = !isNoirS1Status(status) && !isNoirE1Status(status);
 
-  const label = (source: typeof status): string => `${source.dpi.toLocaleString()} DPI`;
+  // dpi 0 means the driver cannot read the live DPI.
+  const label = (source: typeof status): string => source.dpi > 0 ? `${source.dpi.toLocaleString()} DPI` : "–";
 
   return (
     <article

@@ -65,6 +65,7 @@ function computeDeviceImageFilename(displayName: string): string {
   }
   if (/\br5\s*ultra\b/i.test(displayName)) return "attackshark-r5-ultra.png";
   if (/\bfloat\s*88\b/i.test(displayName)) return "ipi-float-88.png";
+  if (/\baula\s*sc580\b/i.test(displayName)) return "aula-sc580.png";
   if (/\batk\s*zero\b/i.test(displayName)) return "atk-zero.png";
   // R2 shares PID 0x402D with the Lingbao M5 Pro, so it can only be told apart
   // by the name the gearhub driver reads back from the device id.
@@ -214,6 +215,7 @@ const LOCAL_OVERRIDES: Readonly<Record<string, string>> = {
   "attackshark-r2.png": "/devices/attackshark-r2.png",
   "delux-m800-mini.png": "/devices/delux-m800-mini.png",
   "ipi-float-88.png": "/devices/ipi-float-88.png",
+  "aula-sc580.png": "/devices/aula-sc580.png",
   "asus-rog-harpe-ace-aim-lab.png": "/devices/asus-rog-harpe-ace-aim-lab.png",
   // A generic keyboard outline, not product art; it stays until Keychron renders are uploaded.
   "keychron-keyboard.svg": "/devices/keychron-keyboard.svg",

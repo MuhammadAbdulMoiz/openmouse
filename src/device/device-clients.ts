@@ -9,6 +9,7 @@ import { SteelSeriesKeyboardClient } from "./steelseries-keyboard.ts";
 import { KeychronKeyboardClient } from "./keychron-keyboard.ts";
 import { keychronHallEffectEnabled } from "./keychron-flag.ts";
 import { ViaKeyboardClient } from "./via-keyboard.ts";
+import { AulaSc580HidClient } from "./aula-sc580.ts";
 import type { PulsarClient, SupportedClient } from "@openmouse/protocol/drivers/registry";
 export { describeHidDevice } from "./hid-diagnostics.ts";
 export { type PulsarClient, type SupportedClient };
@@ -81,6 +82,8 @@ async function bridgeRazerClient(device: HIDDevice): Promise<SupportedClient | n
 
 export async function createMouseClient(device: HIDDevice): Promise<SupportedClient | null> {
   if (isBridgeRazer(device)) return bridgeRazerClient(device);
+  // AULA is not in the protocol package's closed client union.
+  if (AulaSc580HidClient.isSupported(device)) return new AulaSc580HidClient(device) as unknown as SupportedClient;
   return (await loadRegistry()).createSupportedClient(device);
 }
 export async function createSupportedClient(device: HIDDevice): Promise<SupportedClient | null> {
@@ -129,6 +132,7 @@ export async function clientSupportScore(device: HIDDevice): Promise<number> {
   // Keyboard command interfaces win over generic mouse HID++/Razer registries.
   if (createKeyboardClient(device)) return 900;
   if (await bridgeRazerClient(device) !== null) return 10_000;
+  if (AulaSc580HidClient.isSupported(device)) return 50;
   return (await loadRegistry()).clientSupportScore(device);
 }
 
@@ -144,7 +148,8 @@ export async function logicalDeviceGroups(devices: HIDDevice[] = []): Promise<HI
       devices,
       (device) => registry.createSupportedClient(device) !== null
         || (isBridgeRazer(device) && bridgeRazerClientFrom(device, razer) !== null)
-        || createKeyboardClient(device) !== null,
+        || createKeyboardClient(device) !== null
+        || AulaSc580HidClient.isSupported(device),
     ),
   );
   const byPhysicalDevice = new Map<string, HIDDevice[]>();
@@ -193,5 +198,6 @@ export async function listLogicalDevices(devices: HIDDevice[] = []): Promise<HID
 
 /** Brand label for a connected client; the registry answers once loaded. */
 export async function deviceBrand(client: SupportedClient): Promise<string> {
+  if ((client as unknown) instanceof AulaSc580HidClient) return "AULA";
   return (await loadRegistry()).deviceBrand(client);
 }

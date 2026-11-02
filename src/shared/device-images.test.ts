@@ -84,6 +84,7 @@ test("Attack Shark R5 Ultra resolves by name", () => {
 test("IPI Float 88 resolves by name", () => {
   assert.equal(deviceImage(null, "IPI Float 88 (Wired)"), "/devices/ipi-float-88.png");
   assert.equal(deviceImage(null, "IPI Float 88 (Wireless)"), "/devices/ipi-float-88.png");
+  assert.equal(deviceImage(null, "AULA SC580"), "/devices/aula-sc580.png");
 });
 
 test("ATK ZERO resolves by name", () => {

@@ -2902,10 +2902,11 @@ function applyStatusInner(deviceStatus: MouseStatus, statusKey?: string): void {
       ? [summary, `${deviceStatus.dpi.toLocaleString()} DPI`, `${pollingRateText(deviceStatus.pollingRateHz)} Hz`].join(" · ")
       : summary;
   } else if (!hasPendingChanges()) {
-    readStatus = st("ctl.currentLine", { dpi: deviceStatus.dpi.toLocaleString(), hz: pollingRateText(deviceStatus.pollingRateHz) });
+    // dpi 0 means the driver cannot read the live DPI.
+    readStatus = st("ctl.currentLine", { dpi: deviceStatus.dpi > 0 ? deviceStatus.dpi.toLocaleString() : "–", hz: pollingRateText(deviceStatus.pollingRateHz) });
   }
 
-  if (!customDpiEditing) customDpiText = `${status.dpi.toLocaleString()} DPI`;
+  if (!customDpiEditing) customDpiText = status.dpi > 0 ? `${status.dpi.toLocaleString()} DPI` : "–";
 
   const tuning = status.brand === "Logitech" ? status.analogButtonTuning : undefined;
   if (tuning && tuning.buttons.length === 2) {

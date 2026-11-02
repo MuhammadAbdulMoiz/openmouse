@@ -23,4 +23,7 @@ export const KEYCHRON_HID_FILTERS: HIDDeviceFilter[] = Object.keys(KEYCHRON_HE_P
 export const HID_FILTERS: HIDDeviceFilter[] = [
   ...SUPPORTED_HID_FILTERS, ...KEYBOARD_HID_FILTERS, ...(keychronHallEffectEnabled() ? KEYCHRON_HID_FILTERS : []),
   BASILISK_V3_PRO_BLUETOOTH,
+  // AULA SC580 settings channel; browsers hide it, reachable through OpenMouse Bridge.
+  { vendorId: 0x089d, productId: 0x062f, usagePage: 0xff02 },
+  { vendorId: 0x088d, productId: 0x062e, usagePage: 0xff02 },
 ];
